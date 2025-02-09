@@ -19,11 +19,10 @@
   </head>
 
   <body class="bg-gray-50 dark:bg-gray-800">
-    <%= render 'layouts/navigation' %>
+    <%= render 'layouts/admin-navigation' %>
     <p class="notice"><%= notice %></p>
     <p class="alert"><%= alert %></p>
-    <main>
-        <%= yield %>
-    </main>
+    <%= render 'layouts/sidebar' %>   
+    <%= yield %>
   </body>
 </html>

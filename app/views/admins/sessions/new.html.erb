@@ -1,0 +1,35 @@
+<div class="flex flex-col items-center justify-center mx-auto md:h-screen pt:mt-0 dark:bg-gray-900">
+  <%= render 'layouts/messages' %> 
+  <div class="w-full max-w-xl p-6 space-y-8 sm:p-8 bg-white rounded-lg shadow dark:bg-gray-800">
+    <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+      Sign in to platform 
+    </h2>
+    <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
+      <div class="login-form">
+        <div class="mb-6">
+          <%= f.label :email, class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+          <%= f.email_field :email, autofocus: true, autocomplete: "email", class: "block w-full p-4 text-gray-900 border border-gray-300 rounded-lg bg-gray-50 text-base focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500", placeholder: "juan@email.com" %>
+        </div>
+        <div class="mb-6">
+          <%= f.label :password, class: "block mb-2 text-sm font-medium text-gray-900 dark:text-white" %>
+          <%= f.password_field :password, autocomplete: "current-password", class: "block w-full p-4 text-gray-900 border border-gray-300 rounded-lg bg-gray-50 text-base focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500", placeholder: "••••••••" %>
+        </div>
+        <% if devise_mapping.rememberable? %>
+          <div class="field flex items-start mb-5">
+            <div class="flex items-center h-5">
+              <%= f.check_box :remember_me, class: "w-4 h-4 border border-gray-300 rounded-sm bg-gray-50 focus:ring-3 focus:ring-blue-300 dark:bg-gray-700 dark:border-gray-600 dark:focus:ring-blue-600 dark:ring-offset-gray-800 dark:focus:ring-offset-gray-800" %>
+            </div>
+            <%= f.label :remember_me, class: "ml-2 text-sm font-medium text-gray-900 dark:text-gray-300" %>
+            <%- if devise_mapping.recoverable? && controller_name != 'passwords' && controller_name != 'registrations' %>
+              <%= link_to "Forgot your password?", new_password_path(resource_name), class: "ml-auto text-sm text-primary-700 hover:underline dark:text-primary-500" %><br />
+            <% end %>
+          </div>
+        <% end %>
+        <div class="actions mt-5">
+          <%= f.submit "Log in to your account", class: "text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800", data: { turbo: false } %>
+        </div>
+      </div>
+    <% end %>
+    <%= render "admins/shared/links" %>
+  </div>
+</div>
