@@ -10,7 +10,7 @@
   table_start = Time.parse("08:00")
   table_end   = Time.parse("17:00")
 
-  # Generate slots
+  # Generate 30-minute slots
   time_slots = []
   t = table_start
   while t < table_end
@@ -70,7 +70,7 @@
           <% slot_str = slot.strftime("%H:%M") %>
 
           <% if occupied[day][slot_str] %>
-            <%# Skip already rendered rowspan %>
+            <%# Skip: already rendered rowspan %>
 
           <% elsif start_map[day][slot_str].present? %>
             <% entries = start_map[day][slot_str] %>
@@ -79,15 +79,17 @@
             <% slots_remaining = ((table_end - slot) / (slot_minutes*60)).to_i %>
             <% rowspan = [max_rowspan, slots_remaining].min %>
 
+            <% # mark occupied slots %>
             <% (1...rowspan).each do |i| 
                  next_slot = (slot + i*slot_minutes.minutes).strftime("%H:%M")
                  occupied[day][next_slot] = true
                end %>
 
-            <td rowspan="<%= rowspan %>" class="px-2 py-2 border border-gray-300 align-middle text-sm">
+            <% # assign color for this cell %>
+            <% subject_colors[entries.first[:subject]] ||= colors[subject_colors.size % colors.size] %>
+            <td rowspan="<%= rowspan %>" class="px-2 py-2 border border-gray-300 align-middle text-sm <%= subject_colors[entries.first[:subject]] %>">
               <% entries.each do |e| %>
-                <% subject_colors[e[:subject]] ||= colors[subject_colors.size % colors.size] %>
-                <div class="mb-1 p-1 rounded <%= subject_colors[e[:subject]] %> shadow-sm text-xs">
+                <div class="mb-1 p-1 text-xs bg-white/0"> <!-- optional inner transparent bg -->
                   <div class="font-semibold"><%= e[:subject] %></div>
                   <div><%= e[:teacher] %> | <%= e[:section] %></div>
                   <div class="italic"><%= e[:room] %></div>

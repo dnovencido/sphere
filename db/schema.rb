@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_09_22_133555) do
+ActiveRecord::Schema[7.2].define(version: 2025_09_23_033536) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -76,6 +76,8 @@ ActiveRecord::Schema[7.2].define(version: 2025_09_22_133555) do
     t.bigint "section_id", null: false
     t.string "preferred_days", default: [], array: true
     t.string "day_group", default: "weekdays", null: false
+    t.integer "preferred_room_ids", default: [], null: false, array: true
+    t.string "preferred_time"
     t.index ["section_id"], name: "index_subject_offerings_on_section_id"
     t.index ["subject_id"], name: "index_subject_offerings_on_subject_id"
     t.index ["teacher_id"], name: "index_subject_offerings_on_teacher_id"
