@@ -1,0 +1,120 @@
+<%
+  subject_colors = {}
+  colors = %w[
+    bg-yellow-200 bg-green-200 bg-blue-200 bg-pink-200
+    bg-purple-200 bg-orange-200 bg-red-200 bg-teal-200
+  ]
+
+  valid_days = %w[Monday Tuesday Wednesday Thursday Friday Saturday]
+  slot_minutes = 30
+  table_start = Time.parse("08:00")
+  table_end   = Time.parse("17:00")
+
+  # Generate slots
+  time_slots = []
+  t = table_start
+  while t < table_end
+    time_slots << t
+    t += slot_minutes.minutes
+  end
+
+  # Normalize schedule and round start_time down to nearest slot
+  normalized = {}
+  valid_days.each do |day|
+    arr = @schedule_by_day[day] || []
+    normalized[day] = arr.map do |e|
+      st = e[:start_time].is_a?(String) ? Time.parse(e[:start_time]) : e[:start_time]
+      en = e[:end_time].is_a?(String) ? Time.parse(e[:end_time]) : e[:end_time]
+      table_start_time = Time.parse("#{st.hour}:#{(st.min / slot_minutes) * slot_minutes}")
+      e.merge(start_time: st, end_time: en, table_start: table_start_time)
+    end.sort_by { |e| e[:table_start] }
+  end
+
+  # Map start times
+  start_map = {}
+  normalized.each do |day, entries|
+    start_map[day] = Hash.new { |h, k| h[k] = [] }
+    entries.each do |e|
+      key = e[:table_start].strftime("%H:%M")
+      start_map[day][key] << e
+    end
+  end
+
+  # Track occupied slots per day
+  occupied = {}
+  valid_days.each { |d| occupied[d] = {} }
+%>
+
+<h2 class="text-2xl font-bold text-center mb-6 text-gray-800">
+  Year <%= @selected_year %> Timetable
+</h2>
+
+<table class="w-full table-fixed text-sm text-center border border-gray-300">
+  <thead class="bg-gray-800 text-white">
+    <tr>
+      <th class="px-2 py-2 border border-gray-300 w-1/12">From</th>
+      <th class="px-2 py-2 border border-gray-300 w-1/12">To</th>
+      <% valid_days.each do |day| %>
+        <th class="px-2 py-2 border border-gray-300"><%= day[0,3].upcase %></th>
+      <% end %>
+    </tr>
+  </thead>
+
+  <tbody>
+    <% time_slots.each do |slot| %>
+      <tr>
+        <td class="px-1 py-1 border border-gray-300 bg-gray-100"><%= slot.strftime("%I:%M %p") %></td>
+        <td class="px-1 py-1 border border-gray-300 bg-gray-100"><%= (slot + slot_minutes.minutes).strftime("%I:%M %p") %></td>
+
+        <% valid_days.each do |day| %>
+          <% slot_str = slot.strftime("%H:%M") %>
+
+          <% if occupied[day][slot_str] %>
+            <%# Skip already rendered rowspan %>
+
+          <% elsif start_map[day][slot_str].present? %>
+            <% entries = start_map[day][slot_str] %>
+            <% dur_slots = entries.map { |e| ((e[:end_time] - e[:start_time]) / (slot_minutes * 60.0)).ceil } %>
+            <% max_rowspan = dur_slots.max || 1 %>
+            <% slots_remaining = ((table_end - slot) / (slot_minutes*60)).to_i %>
+            <% rowspan = [max_rowspan, slots_remaining].min %>
+
+            <% (1...rowspan).each do |i| 
+                 next_slot = (slot + i*slot_minutes.minutes).strftime("%H:%M")
+                 occupied[day][next_slot] = true
+               end %>
+
+            <td rowspan="<%= rowspan %>" class="px-2 py-2 border border-gray-300 align-middle text-sm">
+              <% entries.each do |e| %>
+                <% subject_colors[e[:subject]] ||= colors[subject_colors.size % colors.size] %>
+                <div class="mb-1 p-1 rounded <%= subject_colors[e[:subject]] %> shadow-sm text-xs">
+                  <div class="font-semibold"><%= e[:subject] %></div>
+                  <div><%= e[:teacher] %> | <%= e[:section] %></div>
+                  <div class="italic"><%= e[:room] %></div>
+                  <div class="mt-1"><%= e[:start_time].strftime("%I:%M %p") %> - <%= e[:end_time].strftime("%I:%M %p") %></div>
+                </div>
+              <% end %>
+            </td>
+
+          <% else %>
+            <td class="border border-gray-300"></td>
+          <% end %>
+        <% end %>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+
+<% if subject_colors.any? %>
+  <div class="mt-6">
+    <h3 class="font-semibold mb-2">Legend</h3>
+    <ul class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+      <% subject_colors.each do |subject, color| %>
+        <li class="flex items-center space-x-2">
+          <span class="w-4 h-4 inline-block rounded <%= color %>"></span>
+          <span class="text-sm"><%= subject %></span>
+        </li>
+      <% end %>
+    </ul>
+  </div>
+<% end %>

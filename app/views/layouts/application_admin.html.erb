@@ -23,6 +23,11 @@
     <p class="notice"><%= notice %></p>
     <p class="alert"><%= alert %></p>
     <%= render 'layouts/sidebar' %>   
-    <%= yield %>
+      <div id="main-content" class="relative w-full h-full overflow-y-auto bg-gray-50 lg:ml-64 dark:bg-gray-900">
+        <main>
+          <%= yield %>
+        </main>
+      </div>
+    </div>
   </body>
 </html>

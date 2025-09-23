@@ -21,5 +21,6 @@ Rails.application.routes.draw do
 
   namespace :admins do
     resources :dashboard, only: [:index]
+    resources :schedules
   end 
 end
