@@ -73,7 +73,7 @@ class GeneticSchedulerService
   end
 
   # -----------------------------
-  # Session plan
+  # Build session plan
   # -----------------------------
   def build_session_plan(subj)
     plan = []
@@ -99,7 +99,7 @@ class GeneticSchedulerService
   end
 
   # -----------------------------
-  # Assign gene (no conflicts, max 5 PM)
+  # Assign gene (conflict-free)
   # -----------------------------
   def assign_gene(off, duration, type, room_occupancy, teacher_schedule, section_schedule, subject_day_schedule, subject_scheduled_days)
     slots = off.day_group == "weekdays" ? weekday_slots : weekend_slots
@@ -112,22 +112,23 @@ class GeneticSchedulerService
 
       start_time = slot[:start_time]
       end_time   = start_time + duration.minutes
-      next if end_time > Time.parse("17:00")  # Ensure class ends by 5 PM
+      next if end_time > Time.parse("17:00")  # End by 5 PM
 
-      # Prevent conflicts
+      # Conflict checks
       next if room_occupancy[[room.id, slot[:day]]].any? { |s,e| overlaps?([start_time, end_time], [s,e]) }
       next if teacher_schedule[[off.teacher_id, slot[:day]]].any? { |s,e| overlaps?([start_time, end_time], [s,e]) }
       next if section_schedule[[off.section_id, slot[:day]]].any? { |s,e| overlaps?([start_time, end_time], [s,e]) }
-      next if subject_scheduled_days[off.subject_id].include?(slot[:day]) # avoid same-day repetition
+      next if subject_scheduled_days[off.subject_id].include?(slot[:day])
       prev_end_times = subject_day_schedule[[off.subject_id, slot[:day]]] || []
-      next if prev_end_times.any? { |prev_end| (prev_end.to_i - start_time.to_i).abs <= 60*60 } # no consecutive lec/lab
+      next if prev_end_times.any? { |prev_end| (prev_end.to_i - start_time.to_i).abs <= 60*60 }
 
       assigned_gene = {
         subject_offering_id: off.id,
         room_id: room.id,
         day: slot[:day],
         start_time: start_time,
-        duration_minutes: duration
+        duration_minutes: duration,
+        type: type
       }
 
       # Track schedules
@@ -144,20 +145,20 @@ class GeneticSchedulerService
     # fallback
     assigned_gene ||= {
       subject_offering_id: off.id,
-      room_id: rooms.sample.id,
+      room_id: rooms.select { |r| r.room_type == type }.sample.id,
       day: slots.first[:day],
       start_time: slots.first[:start_time],
-      duration_minutes: duration
+      duration_minutes: duration,
+      type: type
     }
 
     assigned_gene
   end
 
   # -----------------------------
-  # Mutation with conflict checks
+  # Mutation
   # -----------------------------
   def mutate(chromosome)
-    # Track subject scheduled days globally
     subject_scheduled_days = Hash.new { |h, k| h[k] = Set.new }
     chromosome.each do |gene|
       off = offerings.find { |o| o.id == gene[:subject_offering_id] }
@@ -168,21 +169,21 @@ class GeneticSchedulerService
       next unless rand < mutation_rate
       off = offerings.find { |o| o.id == gene[:subject_offering_id] }
       slots = off.day_group == "weekdays" ? weekday_slots : weekend_slots
-      room_type = gene[:duration_minutes] >= 90 ? "lab" : "lec"
+      room_type = gene[:type]
 
       50.times do
         slot = slots.sample
         room = rooms.select { |r| r.room_type == room_type }.sample
         start_time = slot[:start_time]
         end_time = start_time + gene[:duration_minutes].minutes
-        next if end_time > Time.parse("17:00") # max 5 PM
-        next if subject_scheduled_days[off.subject_id].include?(slot[:day]) # prevent same-day repetition
+        next if end_time > Time.parse("17:00")
+        next if subject_scheduled_days[off.subject_id].include?(slot[:day])
 
-        # Avoid conflicts with other genes
+        # Check conflicts
         next if chromosome.any? do |g|
           g_off = offerings.find { |o| o.id == g[:subject_offering_id] }
-          same_day_overlap = g[:day] == slot[:day] && overlaps?([start_time, end_time], [g[:start_time], g[:start_time] + g[:duration_minutes].minutes])
-          same_day_overlap && (g[:room_id] == room.id || g_off.teacher_id == off.teacher_id || g_off.section_id == off.section_id || g_off.subject_id == off.subject_id)
+          g[:day] == slot[:day] && overlaps?([start_time, end_time], [g[:start_time], g[:start_time] + g[:duration_minutes].minutes]) &&
+            (g[:room_id] == room.id || g_off.teacher_id == off.teacher_id || g_off.section_id == off.section_id || g_off.subject_id == off.subject_id)
         end
 
         gene[:room_id] = room.id
@@ -206,8 +207,8 @@ class GeneticSchedulerService
     section_schedule = Hash.new { |h,k| h[k] = [] }
     subject_days = Hash.new { |h,k| h[k] = Set.new }
 
-    chromosome.each_with_index do |gene, idx|
-      off = offerings[idx % offerings.size]
+    chromosome.each do |gene|
+      off = offerings.find { |o| o.id == gene[:subject_offering_id] }
       start = gene[:start_time]
       finish = start + gene[:duration_minutes].minutes
 
@@ -228,8 +229,8 @@ class GeneticSchedulerService
       genes.group_by { |g| g[:day] }.each do |day, day_genes|
         sorted = day_genes.sort_by { |g| g[:start_time] }
         sorted.each_cons(2) do |g1, g2|
-          type1 = g1[:duration_minutes] >= 90 ? "lab" : "lec"
-          type2 = g2[:duration_minutes] >= 90 ? "lab" : "lec"
+          type1 = g1[:type]
+          type2 = g2[:type]
           total_penalty += 5.0 if (type1 == "lec" && type2 == "lab") || (type1 == "lab" && type2 == "lec")
         end
       end
