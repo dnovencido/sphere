@@ -1,9 +1,13 @@
 # app/services/genetic_scheduler_service.rb
+require 'set'
+require 'parallel'
+
 class GeneticSchedulerService
   attr_reader :semester, :population_size, :generations, :mutation_rate, :crossover_rate,
-              :weekday_slots, :weekend_slots, :offerings, :rooms
+              :weekday_slots, :weekend_slots, :offerings, :rooms,
+              :lec_rooms, :lab_rooms, :offering_lookup, :session_plan_cache
 
-  def initialize(semester:, population_size: 100, generations: 500,
+  def initialize(semester:, population_size: 50, generations: 200,
                  mutation_rate: 0.05, crossover_rate: 0.8, year_level: nil, section_id: nil)
     @semester = semester
     @population_size = population_size
@@ -17,6 +21,12 @@ class GeneticSchedulerService
     @offerings = @offerings.to_a
 
     @rooms = Room.all.to_a
+    @lec_rooms = rooms.select { |r| r.room_type == 'lec' }
+    @lab_rooms = rooms.select { |r| r.room_type == 'lab' }
+
+    @offering_lookup = offerings.index_by(&:id)
+    @session_plan_cache = offerings.map { |off| [off.subject_id, build_session_plan(off.subject)] }.to_h
+
     @weekday_slots = build_time_slots(%w[Monday Tuesday Wednesday Thursday Friday])
     @weekend_slots = build_time_slots(%w[Saturday])
   end
@@ -29,9 +39,24 @@ class GeneticSchedulerService
 
     population = Array.new(population_size) { generate_random_chromosome }
 
-    generations.times do
-      scored = population.map { |chrom| [chrom, fitness(chrom)] }
+    generations.times do |gen|
+      # Parallelized fitness evaluation
+      scored = Parallel.map(population, in_threads: 4) do |chrom|
+        [chrom, fitness(chrom)]
+      end
+
       scored.sort_by! { |_, score| -score }
+
+      # Early stopping if best fitness hasn't improved
+      best_score = scored.first.last
+      @stagnant ||= 0
+      if defined?(@prev_best) && (best_score - @prev_best).abs < 1e-6
+        @stagnant += 1
+      else
+        @stagnant = 0
+        @prev_best = best_score
+      end
+      break if @stagnant >= 20
 
       elite_size = (population_size * 0.2).to_i
       new_population = scored.first(elite_size).map(&:first)
@@ -46,11 +71,12 @@ class GeneticSchedulerService
       population = new_population.first(population_size)
     end
 
+    # Return best chromosome
     population.max_by { |chrom| fitness(chrom) }
   end
 
   # -----------------------------
-  # Generate conflict-free chromosome
+  # Generate random chromosome
   # -----------------------------
   def generate_random_chromosome
     chromosome = []
@@ -61,7 +87,7 @@ class GeneticSchedulerService
     subject_scheduled_days = Hash.new { |h, k| h[k] = Set.new }
 
     offerings.each do |off|
-      build_session_plan(off.subject).each do |duration, type|
+      session_plan_cache[off.subject_id].each do |duration, type|
         gene = assign_gene(off, duration, type,
                            room_occupancy, teacher_schedule, section_schedule,
                            subject_day_schedule, subject_scheduled_days)
@@ -79,14 +105,10 @@ class GeneticSchedulerService
     plan = []
 
     case subj.session_duration
-    when "2x1hr"
-      plan += [[60, "lec"], [60, "lec"]]
-    when "1x3hr"
-      plan << [180, "lec"]
-    when "2x1.5hr"
-      plan += [[90, "lab"], [90, "lab"]]
-    when "3x1hr"
-      plan += [[60, "lec"], [60, "lec"], [60, "lec"]]
+    when "2x1hr" then plan += [[60, "lec"], [60, "lec"]]
+    when "1x3hr"  then plan << [180, "lec"]
+    when "2x1.5hr" then plan += [[90, "lab"], [90, "lab"]]
+    when "3x1hr"  then plan += [[60, "lec"], [60, "lec"], [60, "lec"]]
     else
       if subj.has_lab && subj.lab_duration_minutes > 0
         plan += [[90, "lab"], [90, "lab"]]
@@ -99,20 +121,21 @@ class GeneticSchedulerService
   end
 
   # -----------------------------
-  # Assign gene (conflict-free)
+  # Assign gene
   # -----------------------------
   def assign_gene(off, duration, type, room_occupancy, teacher_schedule, section_schedule, subject_day_schedule, subject_scheduled_days)
     slots = off.day_group == "weekdays" ? weekday_slots : weekend_slots
     assigned_gene = nil
+    available_rooms = type == 'lec' ? lec_rooms : lab_rooms
 
-    100.times do
+    20.times do
       slot = slots.sample
-      room = rooms.select { |r| r.room_type == type }.sample
+      room = available_rooms.sample
       next unless room
 
       start_time = slot[:start_time]
       end_time   = start_time + duration.minutes
-      next if end_time > Time.parse("17:00")  # End by 5 PM
+      next if end_time > Time.parse("17:00")
 
       # Conflict checks
       next if room_occupancy[[room.id, slot[:day]]].any? { |s,e| overlaps?([start_time, end_time], [s,e]) }
@@ -131,7 +154,6 @@ class GeneticSchedulerService
         type: type
       }
 
-      # Track schedules
       room_occupancy[[room.id, slot[:day]]] << [start_time, end_time]
       teacher_schedule[[off.teacher_id, slot[:day]]] << [start_time, end_time]
       section_schedule[[off.section_id, slot[:day]]] << [start_time, end_time]
@@ -142,10 +164,10 @@ class GeneticSchedulerService
       break
     end
 
-    # fallback
+    # Fallback soft conflict gene
     assigned_gene ||= {
       subject_offering_id: off.id,
-      room_id: rooms.select { |r| r.room_type == type }.sample.id,
+      room_id: available_rooms.sample.id,
       day: slots.first[:day],
       start_time: slots.first[:start_time],
       duration_minutes: duration,
@@ -161,19 +183,19 @@ class GeneticSchedulerService
   def mutate(chromosome)
     subject_scheduled_days = Hash.new { |h, k| h[k] = Set.new }
     chromosome.each do |gene|
-      off = offerings.find { |o| o.id == gene[:subject_offering_id] }
+      off = offering_lookup[gene[:subject_offering_id]]
       subject_scheduled_days[off.subject_id] << gene[:day]
     end
 
     chromosome.each do |gene|
       next unless rand < mutation_rate
-      off = offerings.find { |o| o.id == gene[:subject_offering_id] }
+      off = offering_lookup[gene[:subject_offering_id]]
       slots = off.day_group == "weekdays" ? weekday_slots : weekend_slots
-      room_type = gene[:type]
+      available_rooms = gene[:type] == 'lec' ? lec_rooms : lab_rooms
 
-      50.times do
+      10.times do
         slot = slots.sample
-        room = rooms.select { |r| r.room_type == room_type }.sample
+        room = available_rooms.sample
         start_time = slot[:start_time]
         end_time = start_time + gene[:duration_minutes].minutes
         next if end_time > Time.parse("17:00")
@@ -181,8 +203,9 @@ class GeneticSchedulerService
 
         # Check conflicts
         next if chromosome.any? do |g|
-          g_off = offerings.find { |o| o.id == g[:subject_offering_id] }
-          g[:day] == slot[:day] && overlaps?([start_time, end_time], [g[:start_time], g[:start_time] + g[:duration_minutes].minutes]) &&
+          g_off = offering_lookup[g[:subject_offering_id]]
+          g[:day] == slot[:day] &&
+            overlaps?([start_time, end_time], [g[:start_time], g[:start_time] + g[:duration_minutes].minutes]) &&
             (g[:room_id] == room.id || g_off.teacher_id == off.teacher_id || g_off.section_id == off.section_id || g_off.subject_id == off.subject_id)
         end
 
@@ -198,7 +221,7 @@ class GeneticSchedulerService
   end
 
   # -----------------------------
-  # Fitness function
+  # Fitness
   # -----------------------------
   def fitness(chromosome)
     total_penalty = 0.0
@@ -208,7 +231,7 @@ class GeneticSchedulerService
     subject_days = Hash.new { |h,k| h[k] = Set.new }
 
     chromosome.each do |gene|
-      off = offerings.find { |o| o.id == gene[:subject_offering_id] }
+      off = offering_lookup[gene[:subject_offering_id]]
       start = gene[:start_time]
       finish = start + gene[:duration_minutes].minutes
 
@@ -220,12 +243,13 @@ class GeneticSchedulerService
       total_penalty += 1.5 if off.preferred_days_array.any? && !off.preferred_days_array.include?(gene[:day])
     end
 
+    # Overlap penalties (check adjacent only)
     room_schedule.each    { |_, intervals| total_penalty += overlap_penalty(intervals) * 100.0 }
     teacher_schedule.each { |_, intervals| total_penalty += overlap_penalty(intervals) * 50.0 }
     section_schedule.each { |_, intervals| total_penalty += overlap_penalty(intervals) * 50.0 }
 
     # Consecutive lec/lab penalty
-    chromosome.group_by { |gene| offerings.find { |o| o.id == gene[:subject_offering_id] }.subject_id }.each do |subject_id, genes|
+    chromosome.group_by { |gene| offering_lookup[gene[:subject_offering_id]].subject_id }.each do |subject_id, genes|
       genes.group_by { |g| g[:day] }.each do |day, day_genes|
         sorted = day_genes.sort_by { |g| g[:start_time] }
         sorted.each_cons(2) do |g1, g2|
@@ -260,7 +284,8 @@ class GeneticSchedulerService
 
   def overlap_penalty(intervals)
     penalty = 0
-    intervals.combination(2) { |a,b| penalty += 1 if overlaps?(a,b) }
+    sorted = intervals.sort_by(&:first)
+    sorted.each_cons(2) { |a, b| penalty += 1 if overlaps?(a, b) }
     penalty
   end
 
