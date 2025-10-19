@@ -174,10 +174,10 @@ class GeneticSchedulerService
     sorted_schedule.each_cons(2) do |class1, class2|
       gap_duration = class2[0] - class1[1] # minutes between classes
       
-      # Penalize gaps longer than 2.5 hours (150 minutes)
-      if gap_duration > 150
+      # Penalize gaps longer than 2 hours (120 minutes)
+      if gap_duration > 120
         # Increase penalty exponentially with gap size
-        excess_gap = gap_duration - 150
+        excess_gap = gap_duration - 120
         penalty += 2.0 * (excess_gap / 30.0) ** 2 # Quadratic penalty for larger gaps
       end
     end
